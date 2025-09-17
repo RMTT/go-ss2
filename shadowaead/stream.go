@@ -195,7 +195,7 @@ func increment(b []byte) {
 
 type streamConn struct {
 	net.Conn
-	Cipher
+	internal.ShadowCipher
 	r *reader
 	w *writer
 }
@@ -273,4 +273,6 @@ func (c *streamConn) ReadFrom(r io.Reader) (int64, error) {
 }
 
 // NewConn wraps a stream-oriented net.Conn with cipher.
-func NewConn(c net.Conn, ciph Cipher) net.Conn { return &streamConn{Conn: c, Cipher: ciph} }
+func NewConn(c net.Conn, ciph internal.ShadowCipher) net.Conn {
+	return &streamConn{Conn: c, ShadowCipher: ciph}
+}
