@@ -5,6 +5,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"io"
+	"log"
 	"net"
 
 	"github.com/shadowsocks/go-shadowsocks2/internal"
@@ -205,6 +206,7 @@ func (c *streamConn) initReader() error {
 	if _, err := io.ReadFull(c.Conn, salt); err != nil {
 		return err
 	}
+
 	aead, err := c.Decrypter(salt)
 	if err != nil {
 		return err

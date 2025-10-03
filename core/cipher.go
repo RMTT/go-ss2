@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/sagernet/sing-shadowsocks/shadowaead_2022"
 	"github.com/shadowsocks/go-shadowsocks2/internal"
 	"github.com/shadowsocks/go-shadowsocks2/shadowaead"
+	"github.com/shadowsocks/go-shadowsocks2/shadowaead_2022"
 )
 
 // ErrCipherNotSupported occurs when a cipher is not supported (likely because of security concerns).
@@ -27,6 +27,11 @@ const (
 	aeadChacha20Poly1305_2022 = "2022_BLAKE3_CHACHA20_POLY1305"
 )
 
+const (
+	ROLE_CLIENT int = 1
+	ROLE_SERVER int = 2
+)
+
 // List of AEAD ciphers: key size in bytes and constructor
 var aeadList = map[string]struct {
 	KeySize int
@@ -35,9 +40,9 @@ var aeadList = map[string]struct {
 	aeadAes128Gcm:             {16, shadowaead.AESGCM},
 	aeadAes256Gcm:             {32, shadowaead.AESGCM},
 	aeadChacha20Poly1305:      {32, shadowaead.Chacha20Poly1305},
-	aeadAes128Gcm_2022:        {16, shadowaead_2022.AESGCM},
-	aeadAes256Gcm_2022:        {32, shadowaead_2022.AESGCM},
-	aeadChacha20Poly1305_2022: {32, shadowaead_2022.Chacha20Poly1305},
+	aeadAes128Gcm_2022:        {16, shadowaead2022.AESGCM},
+	aeadAes256Gcm_2022:        {32, shadowaead2022.AESGCM},
+	aeadChacha20Poly1305_2022: {32, shadowaead2022.Chacha20Poly1305},
 }
 
 // ListCipher returns a list of available cipher names sorted alphabetically.
@@ -63,7 +68,7 @@ func PickCipher(name string, key []byte, password string) (internal.ShadowCipher
 		name = aeadAes128Gcm
 	case "AES-256-GCM":
 		name = aeadAes256Gcm
-	case "2022-BLAKE3-CHACHA20-IETF-POLY1305":
+	case "2022-BLAKE3-CHACHA20-POLY1305":
 		name = aeadChacha20Poly1305_2022
 	case "2022-BLAKE3-AES-128-GCM":
 		name = aeadAes128Gcm_2022
@@ -75,15 +80,13 @@ func PickCipher(name string, key []byte, password string) (internal.ShadowCipher
 		// SIP022
 		if strings.HasPrefix(name, "2022") {
 			if len(key) == 0 {
-				return nil, ErrSIP022Key
-			}
+				new_key := make([]byte, base64.StdEncoding.DecodedLen(len(password)))
+				n, err := base64.StdEncoding.Decode(new_key, []byte(password))
+				key = new_key[:n]
 
-			new_key := make([]byte, 0)
-			_, err := base64.StdEncoding.Decode(new_key, key)
-			key = new_key
-
-			if err != nil {
-				return nil, err
+				if err != nil {
+					return nil, err
+				}
 			}
 		} else {
 			if len(key) == 0 {

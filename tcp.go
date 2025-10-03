@@ -2,14 +2,17 @@ package main
 
 import (
 	"bufio"
+	crand "crypto/rand"
 	"errors"
 	"io"
 	"io/ioutil"
+	"math/rand"
 	"net"
 	"os"
 	"sync"
 	"time"
 
+	shadowaead2022 "github.com/shadowsocks/go-shadowsocks2/shadowaead_2022"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 )
 
@@ -79,7 +82,25 @@ func tcpLocal(addr, server string, shadow func(net.Conn) net.Conn, getAddr func(
 			}
 			rc = shadow(rc)
 
-			if _, err = rc.Write(tgt); err != nil {
+			if conn2022, ok := rc.(*shadowaead2022.StreamConn); ok {
+				conn2022.Server(false)
+				pad := rand.Intn(shadowaead2022.MaxPaddingLength)
+				padding := make([]byte, pad)
+				_, err := crand.Read(padding)
+				if err != nil {
+					logf("cannot generate padding")
+					return
+				}
+
+				// set variable length header
+				conn2022.SetVariableHeader(&shadowaead2022.VariableLengthHeader{
+					Addr:          tgt,
+					PaddingLength: uint16(pad),
+					Padding:       padding,
+					Payload:       []byte{},
+				})
+				rc = conn2022
+			} else if _, err = rc.Write(tgt); err != nil {
 				logf("failed to send target address: %v", err)
 				return
 			}
@@ -115,16 +136,28 @@ func tcpRemote(addr string, shadow func(net.Conn) net.Conn) {
 			}
 			sc := shadow(c)
 
-			tgt, err := socks.ReadAddr(sc)
-			if err != nil {
-				logf("failed to get target address from %v: %v", c.RemoteAddr(), err)
-				// drain c to avoid leaking server behavioral features
-				// see https://www.ndss-symposium.org/ndss-paper/detecting-probe-resistant-proxies/
-				_, err = io.Copy(ioutil.Discard, c)
+			var tgt socks.Addr
+			var err error
+			if conn2022, ok := sc.(*shadowaead2022.StreamConn); ok {
+				conn2022.Server(true)
+				tgt, err = conn2022.GetTarget()
 				if err != nil {
-					logf("discard error: %v", err)
+					logf("failed to get target address from %v: %v", conn2022.RemoteAddr(), err)
+					return
 				}
-				return
+				sc = conn2022
+			} else {
+				tgt, err = socks.ReadAddr(sc)
+				if err != nil {
+					logf("failed to get target address from %v: %v", c.RemoteAddr(), err)
+					// drain c to avoid leaking server behavioral features
+					// see https://www.ndss-symposium.org/ndss-paper/detecting-probe-resistant-proxies/
+					_, err = io.Copy(ioutil.Discard, c)
+					if err != nil {
+						logf("discard error: %v", err)
+					}
+					return
+				}
 			}
 
 			rc, err := net.Dial("tcp", tgt.String())
