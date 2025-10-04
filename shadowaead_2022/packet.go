@@ -25,17 +25,17 @@ var (
 
 var _zerononce [128]byte // read-only. 128 bytes is more than enough.
 
-// SIP022UDPSession manages UDP session state per SIP022 specification
-type SIP022UDPSession struct {
-	SessionID      uint64
-	nextPacketID   uint64
-	lastSeen       time.Time
-	replayWindow   map[uint64]bool // sliding window for replay protection
-	windowSize     uint64          // replay window size
-	sessionSubkey  []byte          // derived from PSK and session ID
-	aeadEncrypter  cipher.AEAD     // AEAD for encrypting body
-	aeadDecrypter  cipher.AEAD     // AEAD for decrypting body
-	mutex          sync.RWMutex
+// Session manages UDP session state per SIP022 specification
+type Session struct {
+	SessionID     uint64
+	nextPacketID  uint64
+	lastSeen      time.Time
+	replayWindow  map[uint64]bool // sliding window for replay protection
+	windowSize    uint64          // replay window size
+	sessionSubkey []byte          // derived from PSK and session ID
+	aeadEncrypter cipher.AEAD     // AEAD for encrypting body
+	aeadDecrypter cipher.AEAD     // AEAD for decrypting body
+	mutex         sync.RWMutex
 }
 
 // SeparateHeader represents the UDP separate header (16 bytes)
@@ -65,11 +65,11 @@ func DecodeSeparateHeader(data []byte) (*SeparateHeader, error) {
 
 // UDPRequestHeader represents the UDP request main header
 type UDPRequestHeader struct {
-	Type            byte       // HeaderTypeClientStream (0)
-	Timestamp       int64      // Unix epoch timestamp (8 bytes)
-	PaddingLength   uint16     // Padding length (2 bytes)
-	TargetAddress   socks.Addr // Target address
-	Padding         []byte     // Random padding
+	Type          byte       // HeaderTypeClientStream (0)
+	Timestamp     int64      // Unix epoch timestamp (8 bytes)
+	PaddingLength uint16     // Padding length (2 bytes)
+	TargetAddress socks.Addr // Target address
+	Padding       []byte     // Random padding
 }
 
 // EncodeUDPRequestHeader encodes UDP request header
@@ -140,12 +140,12 @@ func DecodeUDPRequestHeader(data []byte) (*UDPRequestHeader, error) {
 	return header, nil
 }
 
-// NewSIP022UDPSession creates a new UDP session with random session ID
-func NewSIP022UDPSession() *SIP022UDPSession {
+// NewSession creates a new UDP session with random session ID
+func NewSession() *Session {
 	sessionID := make([]byte, 8)
 	rand.Read(sessionID)
 
-	return &SIP022UDPSession{
+	return &Session{
 		SessionID:    binary.BigEndian.Uint64(sessionID),
 		nextPacketID: 0,
 		lastSeen:     time.Now(),
@@ -155,7 +155,7 @@ func NewSIP022UDPSession() *SIP022UDPSession {
 }
 
 // GetNextPacketID returns the next packet ID and increments counter
-func (s *SIP022UDPSession) GetNextPacketID() uint64 {
+func (s *Session) GetNextPacketID() uint64 {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -166,7 +166,7 @@ func (s *SIP022UDPSession) GetNextPacketID() uint64 {
 }
 
 // ValidatePacketID checks if packet ID is valid and not a replay
-func (s *SIP022UDPSession) ValidatePacketID(packetID uint64) bool {
+func (s *Session) ValidatePacketID(packetID uint64) bool {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -240,7 +240,7 @@ func decryptSeparateHeaderAES(encrypted []byte, psk []byte) (*SeparateHeader, er
 
 // PackSIP022UDP encrypts plaintext using SIP022 UDP format
 // Format: salt + AES(separate_header) + AEAD(body)
-func PackSIP022UDP(dst, plaintext []byte, targetAddr socks.Addr, ciph internal.ShadowCipher, session *SIP022UDPSession, psk []byte) ([]byte, error) {
+func PackSIP022UDP(dst, plaintext []byte, targetAddr socks.Addr, ciph internal.ShadowCipher, session *Session, psk []byte) ([]byte, error) {
 	saltSize := ciph.SaltSize()
 	salt := dst[:saltSize]
 	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
@@ -304,7 +304,7 @@ func PackSIP022UDP(dst, plaintext []byte, targetAddr socks.Addr, ciph internal.S
 // UnpackSIP022UDP decrypts pkt using SIP022 UDP format
 // Format: salt + AES(separate_header) + AEAD(body)
 // Returns: (targetAddr, payload, sessionID, error)
-func UnpackSIP022UDP(dst, pkt []byte, ciph internal.ShadowCipher, sessions map[uint64]*SIP022UDPSession, psk []byte) (socks.Addr, []byte, uint64, error) {
+func UnpackSIP022UDP(dst, pkt []byte, ciph internal.ShadowCipher, sessions map[uint64]*Session, psk []byte) (socks.Addr, []byte, uint64, error) {
 	saltSize := ciph.SaltSize()
 	if len(pkt) < saltSize+16 { // salt + separate header
 		return nil, nil, 0, ErrShortPacket
@@ -328,7 +328,7 @@ func UnpackSIP022UDP(dst, pkt []byte, ciph internal.ShadowCipher, sessions map[u
 	session, exists := sessions[separateHeader.SessionID]
 	if !exists {
 		// New session - create it (server side)
-		session = &SIP022UDPSession{
+		session = &Session{
 			SessionID:    separateHeader.SessionID,
 			nextPacketID: 0,
 			lastSeen:     time.Now(),
@@ -435,10 +435,10 @@ type SIP022PacketConn struct {
 	net.PacketConn
 	internal.ShadowCipher
 	sync.RWMutex
-	buf            []byte                       // write buffer
-	psk            []byte                       // pre-shared key for AES encryption
-	clientSession  *SIP022UDPSession            // for client-side
-	serverSessions map[uint64]*SIP022UDPSession // for server-side session tracking
+	buf            []byte              // write buffer
+	psk            []byte              // pre-shared key for AES encryption
+	clientSession  *Session            // for client-side
+	serverSessions map[uint64]*Session // for server-side session tracking
 	isServer       bool
 	targetAddr     socks.Addr // target address for client mode
 }
@@ -461,11 +461,11 @@ func NewSIP022PacketConn(c net.PacketConn, ciph internal.ShadowCipher, psk []byt
 		buf:            make([]byte, maxPacketSize),
 		psk:            psk,
 		isServer:       isServer,
-		serverSessions: make(map[uint64]*SIP022UDPSession),
+		serverSessions: make(map[uint64]*Session),
 	}
 
 	if !isServer {
-		conn.clientSession = NewSIP022UDPSession()
+		conn.clientSession = NewSession()
 	}
 
 	return conn
