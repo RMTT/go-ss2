@@ -1,8 +1,8 @@
 package core
 
 import (
-	"net"
 	"github.com/shadowsocks/go-shadowsocks2/internal"
+	"net"
 )
 
 type listener struct {
@@ -17,10 +17,10 @@ func Listen(network, address string, ciph internal.StreamConnCipher) (net.Listen
 
 func (l *listener) Accept() (net.Conn, error) {
 	c, err := l.Listener.Accept()
-	return l.StreamConn(c), err
+	return l.StreamConn(c, 0), err
 }
 
 func Dial(network, address string, ciph internal.StreamConnCipher) (net.Conn, error) {
 	c, err := net.Dial(network, address)
-	return ciph.StreamConn(c), err
+	return ciph.StreamConn(c, 0), err
 }

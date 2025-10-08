@@ -13,11 +13,11 @@ type ShadowMethod interface {
 }
 
 type StreamConnCipher interface {
-	StreamConn(net.Conn) net.Conn
+	StreamConn(net.Conn, int) net.Conn
 }
 
 type PacketConnCipher interface {
-	PacketConn(net.PacketConn) net.PacketConn
+	PacketConn(net.PacketConn, int) net.PacketConn
 }
 
 type ShadowCipher interface {

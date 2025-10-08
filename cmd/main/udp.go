@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
+	shadowaead2022 "github.com/shadowsocks/go-shadowsocks2/shadowaead_2022"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
+	"github.com/shadowsocks/go-shadowsocks2/utils"
 )
 
 type mode int
@@ -81,7 +84,7 @@ func udpLocal(laddr, server, target string, shadow func(net.PacketConn) net.Pack
 }
 
 // Listen on laddr for Socks5 UDP packets, encrypt and send to server to reach target.
-func udpSocksLocal(laddr, server string, shadow func(net.PacketConn) net.PacketConn) {
+func udpSocksLocal(cipher, laddr, server string, shadow func(net.PacketConn, int) net.PacketConn) {
 	srvAddr, err := net.ResolveUDPAddr("udp", server)
 	if err != nil {
 		logf("UDP server address error: %v", err)
@@ -101,7 +104,8 @@ func udpSocksLocal(laddr, server string, shadow func(net.PacketConn) net.PacketC
 	}
 	defer c.Close()
 
-	nm := newNATmap(config.UDPTimeout)
+	sessionMap := newNATmap(config.UDPTimeout)
+	sessionMap2022 := utils.NewSessionManager(config.UDPTimeout, udpBufSize)
 	buf := make([]byte, udpBufSize)
 
 	for {
@@ -111,16 +115,29 @@ func udpSocksLocal(laddr, server string, shadow func(net.PacketConn) net.PacketC
 			continue
 		}
 
-		pc := nm.Get(raddr)
+		var pc net.PacketConn
+		if strings.HasPrefix(cipher, "2022") {
+			pc = sessionMap2022.GetByAddr(raddr)
+		} else {
+			pc = sessionMap.Get(raddr)
+		}
+
 		if pc == nil {
 			pc, err = net.ListenPacket("udp", "")
 			if err != nil {
 				logf("UDP local listen error: %v", err)
 				continue
 			}
-			logf("UDP socks tunnel %s <-> %s <-> %s", laddr, server, socks.Addr(buf[3:]))
-			pc = shadow(pc)
-			nm.Add(raddr, c, pc, socksClient)
+
+			tgt := socks.Addr(buf[3:])
+			logf("UDP socks tunnel %s <-> %s <-> %s", laddr, server, tgt)
+			pc = shadow(pc, utils.ROLE_CLIENT)
+			if conn2022, ok := pc.(*shadowaead2022.PacketConn); ok {
+				conn2022.SetTargetAddr(tgt)
+				sessionMap2022.SetByAddr(raddr, pc, c, raddr)
+			} else {
+				sessionMap.Add(raddr, c, pc, socksClient)
+			}
 		}
 
 		_, err = pc.WriteTo(buf[3:n], srvAddr)
@@ -131,14 +148,8 @@ func udpSocksLocal(laddr, server string, shadow func(net.PacketConn) net.PacketC
 	}
 }
 
-type UDPConn interface {
-	net.PacketConn
-	ReadFromUDPAddrPort([]byte) (int, netip.AddrPort, error)
-	WriteToUDPAddrPort([]byte, netip.AddrPort) (int, error)
-}
-
 // Listen on addr for encrypted packets and basically do UDP NAT.
-func udpRemote(addr string, shadow func(net.PacketConn) net.PacketConn) {
+func udpRemote(cipher, addr string, shadow func(net.PacketConn, int) net.PacketConn) {
 	nAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		logf("UDP server address error: %v", err)
@@ -150,9 +161,10 @@ func udpRemote(addr string, shadow func(net.PacketConn) net.PacketConn) {
 		return
 	}
 	defer cc.Close()
-	c := shadow(cc).(UDPConn)
+	c := shadow(cc, utils.ROLE_SERVER).(utils.UDPConn)
 
-	nm := newNATmap(config.UDPTimeout)
+	sessionMap := newNATmap(config.UDPTimeout)
+	sessionMap2022 := utils.NewSessionManager(config.UDPTimeout, udpBufSize)
 	buf := make([]byte, udpBufSize)
 
 	logf("listening UDP on %s", addr)
@@ -163,7 +175,14 @@ func udpRemote(addr string, shadow func(net.PacketConn) net.PacketConn) {
 			continue
 		}
 
-		tgtAddr := socks.SplitAddr(buf[:n])
+		var tgtAddr socks.Addr
+
+		if strings.HasPrefix(cipher, "2022") {
+			conn2022 := c.(*shadowaead2022.PacketConn)
+			tgtAddr = conn2022.GetTargetAddr()
+		} else {
+			tgtAddr = socks.SplitAddr(buf[:n])
+		}
 		if tgtAddr == nil {
 			logf("failed to split target address from packet: %q", buf[:n])
 			continue
@@ -175,9 +194,20 @@ func udpRemote(addr string, shadow func(net.PacketConn) net.PacketConn) {
 			continue
 		}
 
-		payload := buf[len(tgtAddr):n]
+		var payload []byte
+		if strings.HasPrefix(cipher, "2022") {
+			payload = buf[:n]
+		} else {
+			payload = buf[len(tgtAddr):n]
+		}
 
-		pc := nm.Get(raddr)
+		var pc net.PacketConn
+		if strings.HasPrefix(cipher, "2022") {
+			conn2022 := c.(*shadowaead2022.PacketConn)
+			pc = sessionMap2022.GetBySessionID(conn2022.GetSessionID())
+		} else {
+			pc = sessionMap.Get(raddr)
+		}
 		if pc == nil {
 			pc, err = net.ListenPacket("udp", "")
 			if err != nil {
@@ -185,7 +215,12 @@ func udpRemote(addr string, shadow func(net.PacketConn) net.PacketConn) {
 				continue
 			}
 
-			nm.Add(raddr, c, pc, remoteServer)
+			if strings.HasPrefix(cipher, "2022") {
+				conn2022 := c.(*shadowaead2022.PacketConn)
+				sessionMap2022.SetBySessionID(conn2022.GetSessionID(), pc, c, raddr)
+			} else {
+				sessionMap.Add(raddr, c, pc, remoteServer)
+			}
 		}
 
 		_, err = pc.WriteTo(payload, tgtUDPAddr) // accept only UDPAddr despite the signature
@@ -235,7 +270,7 @@ func (m *natmap) Del(key netip.AddrPort) net.PacketConn {
 	return nil
 }
 
-func (m *natmap) Add(peer netip.AddrPort, dst UDPConn, src net.PacketConn, role mode) {
+func (m *natmap) Add(peer netip.AddrPort, dst utils.UDPConn, src net.PacketConn, role mode) {
 	m.Set(peer, src)
 
 	go func() {
@@ -247,7 +282,7 @@ func (m *natmap) Add(peer netip.AddrPort, dst UDPConn, src net.PacketConn, role 
 }
 
 // copy from src to dst at target with read timeout
-func timedCopy(dst UDPConn, target netip.AddrPort, src net.PacketConn, timeout time.Duration, role mode) error {
+func timedCopy(dst utils.UDPConn, target netip.AddrPort, src net.PacketConn, timeout time.Duration, role mode) error {
 	buf := make([]byte, udpBufSize)
 
 	for {

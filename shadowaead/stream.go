@@ -5,7 +5,6 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"io"
-	"log"
 	"net"
 
 	"github.com/shadowsocks/go-shadowsocks2/internal"

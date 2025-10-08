@@ -30,9 +30,9 @@ func (a *metaCipher) Decrypter(salt []byte) (cipher.AEAD, error) {
 	return a.makeAEAD(subkey)
 }
 
-func (a *metaCipher) StreamConn(c net.Conn) net.Conn { return NewConn(c, a) }
-func (a *metaCipher) PacketConn(c net.PacketConn) net.PacketConn {
-	return NewPacketConn(c, a)
+func (a *metaCipher) StreamConn(c net.Conn, role int) net.Conn { return NewConn(c, a) }
+func (a *metaCipher) PacketConn(c net.PacketConn, role int) net.PacketConn {
+	return NewPacketConn(c, a, a.psk, role)
 }
 
 // AESGCM creates a new Cipher with a pre-shared key. len(psk) must be

@@ -27,11 +27,6 @@ const (
 	aeadChacha20Poly1305_2022 = "2022_BLAKE3_CHACHA20_POLY1305"
 )
 
-const (
-	ROLE_CLIENT int = 1
-	ROLE_SERVER int = 2
-)
-
 // List of AEAD ciphers: key size in bytes and constructor
 var aeadList = map[string]struct {
 	KeySize int
@@ -117,8 +112,8 @@ func (dummy) Encrypter(salt []byte) (cipher.AEAD, error) {
 func (dummy) Decrypter(salt []byte) (cipher.AEAD, error) {
 	return nil, nil
 }
-func (dummy) StreamConn(c net.Conn) net.Conn             { return c }
-func (dummy) PacketConn(c net.PacketConn) net.PacketConn { return c }
+func (dummy) StreamConn(c net.Conn, role int) net.Conn             { return c }
+func (dummy) PacketConn(c net.PacketConn, role int) net.PacketConn { return c }
 
 // key-derivation function from original Shadowsocks
 func kdf(password string, keyLen int) []byte {

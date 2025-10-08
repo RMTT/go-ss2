@@ -722,7 +722,7 @@ func (c *StreamConn) SetVariableHeader(variable *VariableLengthHeader) error {
 }
 
 // get target(socks address format) from variable length header of request stream
-func (c *StreamConn) GetTarget() (socks.Addr, error) {
+func (c *StreamConn) GetTargetAddr() (socks.Addr, error) {
 	if c.variableHeader == nil {
 		if c.r == nil {
 			if err := c.initReader(); err != nil {
