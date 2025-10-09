@@ -12,6 +12,7 @@ import (
 
 	"github.com/shadowsocks/go-shadowsocks2/internal"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
+	"github.com/shadowsocks/go-shadowsocks2/utils"
 )
 
 // payloadSizeMask is the maximum size of payload in bytes per SIP022.
@@ -756,11 +757,7 @@ func (c *StreamConn) ReadFrom(r io.Reader) (int64, error) {
 	return c.w.ReadFrom(r)
 }
 
-func (c *StreamConn) Server(f bool) {
-	c.isServer = f
-}
-
 // NewConn wraps a stream-oriented net.Conn with cipher.
-func NewConn(c net.Conn, ciph internal.ShadowCipher) net.Conn {
-	return &StreamConn{Conn: c, ShadowCipher: ciph}
+func NewConn(c net.Conn, ciph internal.ShadowCipher, role int) net.Conn {
+	return &StreamConn{Conn: c, ShadowCipher: ciph, isServer: role == utils.ROLE_SERVER}
 }

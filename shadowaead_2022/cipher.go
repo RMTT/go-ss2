@@ -30,7 +30,7 @@ func (a *metaCipher) Decrypter(salt []byte) (cipher.AEAD, error) {
 	return a.makeAEAD(subkey)
 }
 
-func (a *metaCipher) StreamConn(c net.Conn, role int) net.Conn { return NewConn(c, a) }
+func (a *metaCipher) StreamConn(c net.Conn, role int) net.Conn { return NewConn(c, a, role) }
 func (a *metaCipher) PacketConn(c net.PacketConn, role int) net.PacketConn {
 	return NewPacketConn(c, a, a.psk, role)
 }

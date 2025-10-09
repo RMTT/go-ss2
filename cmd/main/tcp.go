@@ -73,7 +73,6 @@ func tcpLocal(ciper, addr, server string, shadow func(net.Conn, int) net.Conn, g
 			rc = shadow(rc, utils.ROLE_CLIENT)
 
 			if conn2022, ok := rc.(*shadowaead2022.StreamConn); ok {
-				conn2022.Server(false)
 				pad := rand.Intn(shadowaead2022.MaxPaddingLength)
 				padding := make([]byte, pad)
 				_, err := crand.Read(padding)
@@ -128,7 +127,6 @@ func tcpRemote(ciper, addr string, shadow func(net.Conn, int) net.Conn) {
 			var tgt socks.Addr
 			var err error
 			if conn2022, ok := sc.(*shadowaead2022.StreamConn); ok {
-				conn2022.Server(true)
 				tgt, err = conn2022.GetTargetAddr()
 				if err != nil {
 					logf("failed to get target address from %v: %v", conn2022.RemoteAddr(), err)
