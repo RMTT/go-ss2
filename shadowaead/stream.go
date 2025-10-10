@@ -211,7 +211,7 @@ func (c *streamConn) initReader() error {
 		return err
 	}
 
-	if internal.CheckSalt(salt) {
+	if CheckSalt(salt) {
 		return ErrRepeatedSalt
 	}
 
@@ -250,7 +250,7 @@ func (c *streamConn) initWriter() error {
 	if err != nil {
 		return err
 	}
-	internal.AddSalt(salt)
+	AddSalt(salt)
 	c.w = newWriter(c.Conn, aead)
 	return nil
 }

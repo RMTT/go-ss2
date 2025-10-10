@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,7 +25,7 @@ func socksLocal(ciper, addr, server string, shadow func(net.Conn, int) net.Conn)
 }
 
 // Listen on addr and proxy to server to reach target from getAddr.
-func tcpLocal(ciper, addr, server string, shadow func(net.Conn, int) net.Conn, getAddr func(net.Conn) (socks.Addr, error)) {
+func tcpLocal(cipher, addr, server string, shadow func(net.Conn, int) net.Conn, getAddr func(net.Conn) (socks.Addr, error)) {
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		logf("failed to listen on %s: %v", addr, err)
@@ -72,7 +73,8 @@ func tcpLocal(ciper, addr, server string, shadow func(net.Conn, int) net.Conn, g
 			}
 			rc = shadow(rc, utils.ROLE_CLIENT)
 
-			if conn2022, ok := rc.(*shadowaead2022.StreamConn); ok {
+			if strings.HasPrefix(cipher, "2022") {
+				conn2022 := rc.(*shadowaead2022.StreamConn)
 				pad := rand.Intn(shadowaead2022.MaxPaddingLength)
 				padding := make([]byte, pad)
 				_, err := crand.Read(padding)
@@ -81,13 +83,8 @@ func tcpLocal(ciper, addr, server string, shadow func(net.Conn, int) net.Conn, g
 					return
 				}
 
-				// set variable length header
-				conn2022.SetVariableHeader(&shadowaead2022.VariableLengthHeader{
-					Addr:          tgt,
-					PaddingLength: uint16(pad),
-					Padding:       padding,
-					Payload:       []byte{},
-				})
+				conn2022.InitWrite(tgt, padding, nil)
+
 			} else if _, err = rc.Write(tgt); err != nil {
 				logf("failed to send target address: %v", err)
 				return
@@ -102,7 +99,7 @@ func tcpLocal(ciper, addr, server string, shadow func(net.Conn, int) net.Conn, g
 }
 
 // Listen on addr for incoming connections.
-func tcpRemote(ciper, addr string, shadow func(net.Conn, int) net.Conn) {
+func tcpRemote(cipher, addr string, shadow func(net.Conn, int) net.Conn) {
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		logf("failed to listen on %s: %v", addr, err)
@@ -126,13 +123,13 @@ func tcpRemote(ciper, addr string, shadow func(net.Conn, int) net.Conn) {
 
 			var tgt socks.Addr
 			var err error
-			if conn2022, ok := sc.(*shadowaead2022.StreamConn); ok {
-				tgt, err = conn2022.GetTargetAddr()
+			if strings.HasPrefix(cipher, "2022") {
+				conn2022 := sc.(*shadowaead2022.StreamConn)
+				tgt, err = conn2022.InitRead()
 				if err != nil {
 					logf("failed to get target address from %v: %v", conn2022.RemoteAddr(), err)
 					return
 				}
-				sc = conn2022
 			} else {
 				tgt, err = socks.ReadAddr(sc)
 				if err != nil {

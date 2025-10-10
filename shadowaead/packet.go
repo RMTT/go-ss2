@@ -30,7 +30,7 @@ func Pack(dst, plaintext []byte, ciph internal.ShadowCipher) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	internal.AddSalt(salt)
+	AddSalt(salt)
 
 	if len(dst) < saltSize+len(plaintext)+aead.Overhead() {
 		return nil, io.ErrShortBuffer
@@ -51,7 +51,7 @@ func Unpack(dst, pkt []byte, ciph internal.ShadowCipher) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if internal.CheckSalt(salt) {
+	if CheckSalt(salt) {
 		return nil, ErrRepeatedSalt
 	}
 	if len(pkt) < saltSize+aead.Overhead() {

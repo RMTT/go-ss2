@@ -435,13 +435,12 @@ func (w *writer) writeChunk(data []byte) error {
 type reader struct {
 	io.Reader
 	cipher.AEAD
-	conn        *StreamConn
-	nonce       []byte
-	buf         []byte
-	leftover    []byte
-	headerRead  bool
-	fixedHeader *FixedLengthHeader
-	saltSize    int
+	conn       *StreamConn
+	nonce      []byte
+	buf        []byte
+	leftover   []byte
+	headerRead bool
+	saltSize   int
 }
 
 // NewReader wraps an io.Reader with AEAD decryption.
@@ -449,13 +448,12 @@ func NewReader(r io.Reader, aead cipher.AEAD) io.Reader { return newReader(r, ae
 
 func newReader(r io.Reader, aead cipher.AEAD, saltSize int) *reader {
 	return &reader{
-		Reader:      r,
-		AEAD:        aead,
-		buf:         make([]byte, payloadSizeMask+aead.Overhead()),
-		nonce:       make([]byte, aead.NonceSize()),
-		headerRead:  false,
-		fixedHeader: nil,
-		saltSize:    saltSize,
+		Reader:     r,
+		AEAD:       aead,
+		buf:        make([]byte, payloadSizeMask+aead.Overhead()),
+		nonce:      make([]byte, aead.NonceSize()),
+		headerRead: false,
+		saltSize:   saltSize,
 	}
 }
 
@@ -522,10 +520,10 @@ func (r *reader) readHeaders() error {
 	if err != nil {
 		return err
 	}
-	r.fixedHeader = fixedHeader
+	r.conn.fixedHeader = fixedHeader
 
 	// Variable header size is specified in fixed header's Length field
-	size, err = r.readHeaderChunk(int(r.fixedHeader.Length))
+	size, err = r.readHeaderChunk(int(r.conn.fixedHeader.Length))
 	if err != nil {
 		return err
 	}
@@ -648,6 +646,7 @@ type StreamConn struct {
 	w              *writer
 	isServer       bool
 	variableHeader *VariableLengthHeader
+	fixedHeader    *FixedLengthHeader
 	clientSalt     []byte // Store client salt at connection level
 }
 
@@ -659,10 +658,6 @@ func (c *StreamConn) initReader() error {
 	aead, err := c.Decrypter(salt)
 	if err != nil {
 		return err
-	}
-
-	if internal.CheckSaltSIP022(salt) {
-		return ErrRepeatedSalt
 	}
 
 	c.r = newReader(c.Conn, aead, c.SaltSize())
@@ -702,7 +697,7 @@ func (c *StreamConn) initWriter() error {
 	if err != nil {
 		return err
 	}
-	internal.AddSaltSIP022(salt)
+
 	c.w = newWriter(c.Conn, aead)
 	c.w.salt = salt
 	c.w.conn = c
@@ -722,21 +717,78 @@ func (c *StreamConn) SetVariableHeader(variable *VariableLengthHeader) error {
 	return nil
 }
 
-// get target(socks address format) from variable length header of request stream
-func (c *StreamConn) GetTargetAddr() (socks.Addr, error) {
+func (c *StreamConn) validateHeaders() error {
+	if c.fixedHeader == nil || c.variableHeader == nil {
+		return errors.New("no header received")
+	}
+
+	if c.variableHeader.PaddingLength == 0 && len(c.variableHeader.Payload) == 0 {
+		return errors.New("one of padding and initial payload must be set")
+	}
+
+	packetTime := time.Unix(c.fixedHeader.Timestamp, 0)
+	if diffTime := time.Since(packetTime); diffTime > 30*time.Second {
+		return errors.New("time difference between server and client is too large")
+	}
+
+	return nil
+}
+
+// InitRead will read salt + fixed length header + variable length header from first packet of connection
+// Btw, header validating also be applied
+func (c *StreamConn) InitRead() (socks.Addr, error) {
+	if !c.isServer {
+		return nil, nil
+	}
+
+	var err error
 	if c.variableHeader == nil {
 		if c.r == nil {
-			if err := c.initReader(); err != nil {
-				return nil, err
-			}
+			err = c.initReader()
 		}
 
-		if err := c.r.readHeaders(); err != nil {
-			return nil, err
+		if err == nil {
+			if !CheckSalt(c.clientSalt) {
+				return nil, ErrRepeatedSalt
+			}
+
+			err = c.r.readHeaders()
 		}
 	}
 
+	if err == nil {
+		err = c.validateHeaders()
+	}
+
+	if err != nil {
+		conn := c.Conn.(*net.TCPConn)
+		// This defends against probes that send one byte at a time to detect
+		// how many bytes the server consumes before closing the connection.
+		conn.CloseWrite()
+
+		return nil, err
+	}
+
 	return c.variableHeader.Addr, nil
+}
+
+func (c *StreamConn) InitWrite(target socks.Addr, padding, initialPayload []byte) error {
+	if c.isServer {
+		return nil
+	}
+
+	if len(padding) == 0 && len(initialPayload) == 0 {
+		return errors.New("one of padding and initial payload must be set")
+	}
+
+	c.variableHeader = &VariableLengthHeader{
+		Addr:          target,
+		PaddingLength: uint16(len(padding)),
+		Padding:       padding,
+		Payload:       initialPayload,
+	}
+
+	return nil
 }
 
 func (c *StreamConn) Write(b []byte) (int, error) {
